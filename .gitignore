@@ -8,3 +8,7 @@
 **/.agents/
 .vercel
 .env*
+
+!repas-eliott/.env.production
+**/.claude/
+**/.cursor/

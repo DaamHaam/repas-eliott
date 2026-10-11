@@ -1,0 +1,93 @@
+# Automatisations des agents (modèle : WORKFLOW/templates/github/agents.yml).
+# Fait côté GitHub ce que les sessions cloud ne peuvent pas faire elles-mêmes :
+#   - clôture : un commit dont le message commence par « Clôture » poussé sur la
+#     branche de travail déplace le tag `revue-ok` sur ce commit et envoie le
+#     résumé (première entrée de JOURNAL.md) sur Telegram ;
+#   - version : un push sur `main` dont les autres workflows (CI) finissent au vert
+#     crée le tag `vX.Y.Z` lu dans FICHIER_VERSION
+#     s'il n'existe pas encore, puis notifie. Laisser FICHIER_VERSION vide pour
+#     désactiver.
+# Par projet, n'adapter que les lignes marquées « PROJET ».
+# Secrets requis (dépôt) : TG_CLAUDE_TOKEN, TG_CODEX_TOKEN, TG_CHAT_ID.
+
+name: Agents (clôture, versions, notifications)
+
+on:
+  push:
+    branches: [dev, main] # PROJET : branche de travail + main
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  BRANCHE_TRAVAIL: dev # PROJET : dev, main, Next…
+  FICHIER_VERSION: ""  # PROJET : ex. package.json ; vide = pas de tag de version
+
+jobs:
+  agents:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clôture, version et notification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TG_CLAUDE_TOKEN: ${{ secrets.TG_CLAUDE_TOKEN }}
+          TG_CODEX_TOKEN: ${{ secrets.TG_CODEX_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"; sha="$GITHUB_SHA"; branche="${GITHUB_REF_NAME}"
+          projet="${repo#*/}"
+
+          if grep -q '^Agent: Codex' <<<"$MESSAGE"; then nom="Codex"; token="$TG_CODEX_TOKEN"
+          else nom="Claude"; token="$TG_CLAUDE_TOKEN"; fi
+
+          notifier() {
+            [ -n "$token" ] && [ -n "$TG_CHAT_ID" ] || { echo "Secrets Telegram absents"; return 0; }
+            curl -sf -o /dev/null --max-time 15 "https://api.telegram.org/bot${token}/sendMessage" \
+              --data-urlencode "chat_id=${TG_CHAT_ID}" --data-urlencode "text=${1:0:3800}" \
+              || echo "Échec de l'envoi Telegram"
+          }
+
+          poser_tag() { # $1 = nom du tag, $2 = forcer (true/false)
+            if gh api "repos/$repo/git/refs/tags/$1" >/dev/null 2>&1; then
+              [ "$2" = true ] || return 1
+              gh api -X PATCH "repos/$repo/git/refs/tags/$1" -f sha="$sha" -F force=true >/dev/null
+            else
+              gh api -X POST "repos/$repo/git/refs" -f ref="refs/tags/$1" -f sha="$sha" >/dev/null
+            fi
+          }
+
+          fichier() { gh api -H "Accept: application/vnd.github.raw" "repos/$repo/contents/$1?ref=$sha" 2>/dev/null || true; }
+
+          # Clôture
+          if [ "$branche" = "$BRANCHE_TRAVAIL" ] && [[ "$MESSAGE" == Clôture* ]]; then
+            poser_tag revue-ok true
+            entree=$(fichier JOURNAL.md | awk '/^## /{n++} n==1' )
+            notifier "✅ ${nom} · ${projet} — clôture (revue-ok → ${sha:0:7})
+          ${entree}"
+            echo "revue-ok déplacé sur $sha"
+          fi
+
+          # Version : attendre que les autres workflows de ce commit (CI, déploiement) soient verts.
+          ci_verte() {
+            for i in $(seq 1 90); do
+              runs=$(gh run list -R "$repo" --commit "$sha" --json workflowName,status,conclusion \
+                     --jq "[.[] | select(.workflowName != \"$GITHUB_WORKFLOW\")]")
+              [ "$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")" = 0 ] && break
+              sleep 20
+            done
+            [ "$(jq '[.[] | select(.status != "completed" or (.conclusion != "success" and .conclusion != "skipped"))] | length' <<<"$runs")" = 0 ]
+          }
+          if [ "$branche" = "main" ] && [ -n "$FICHIER_VERSION" ]; then
+            version=$(fichier "$FICHIER_VERSION" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+            if [ -n "$version" ] && ! gh api "repos/$repo/git/refs/tags/v$version" >/dev/null 2>&1 && ! ci_verte; then
+              notifier "⚠️ ${nom} · ${projet} — CI non verte sur main (${sha:0:7}), v${version} non taguée"
+            elif [ -n "$version" ] && poser_tag "v$version" false; then
+              notifier "🚀 ${nom} · ${projet} — v${version} publiée sur main (${sha:0:7})"
+              echo "Tag v$version créé"
+            else
+              echo "Pas de nouveau tag de version (${version:-introuvable})"
+            fi
+          fi

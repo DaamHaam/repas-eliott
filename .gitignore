@@ -1,0 +1,10 @@
+**/node_modules/
+**/dist/
+**/*.local
+**/.env.local
+**/.vercel/
+**/.DS_Store
+**/*.tsbuildinfo
+**/.agents/
+.vercel
+.env*

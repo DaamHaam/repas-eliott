@@ -59,13 +59,21 @@ export const mine = query({
   },
 });
 
+function checkVersion(family: { active: boolean; updatedAt: number }, expected?: number | null) {
+  if (!family.active) throw new ConvexError("Cette inscription a été annulée. Crée une nouvelle inscription.");
+  if (expected !== family.updatedAt) throw new ConvexError("Cette inscription a été modifiée ailleurs. Charge la dernière version avant d’enregistrer.");
+}
+function nextVersion(previous = 0) { return Math.max(Date.now(), previous + 1); }
+
 export const save = mutation({
-  args: { token: v.string(), name: v.string(), guests: v.number(), comment: v.string(), choices: choicesValidator }, returns: v.id("families"),
+  args: { token: v.string(), name: v.string(), guests: v.number(), comment: v.string(), choices: choicesValidator, expectedUpdatedAt: v.optional(v.union(v.number(), v.null())) }, returns: v.object({ id: v.id("families"), updatedAt: v.number() }),
   handler: async (ctx, args) => {
     validateIdentity(args.name, args.guests, args.comment);
     if (args.choices.length > 180 || new Set(args.choices.map(c => c.slotId)).size !== args.choices.length) throw new ConvexError("Sélection de places invalide.");
     const tokenHash = await hash(args.token);
     const family = await ctx.db.query("families").withIndex("by_tokenHash", q => q.eq("tokenHash", tokenHash)).unique();
+    if (family) checkVersion(family, args.expectedUpdatedAt);
+    else if (args.expectedUpdatedAt != null) throw new ConvexError("Inscription introuvable.");
     // Every slot is checked and written in one transaction: concurrent claims cannot overbook.
     for (const choice of args.choices) {
       if (!choice.dish.trim() || choice.dish.trim().length > 180) throw new ConvexError("Précise ce que tu apportes (180 caractères maximum).");
@@ -76,14 +84,14 @@ export const save = mutation({
       const all = await ctx.db.query("families").take(201);
       if (all.length >= 200) throw new ConvexError("Les inscriptions sont momentanément fermées. Contacte les organisateurs.");
     }
-    const values = { name: args.name.trim(), guests: args.guests, comment: args.comment.trim(), active: true, updatedAt: Date.now() };
+    const values = { name: args.name.trim(), guests: args.guests, comment: args.comment.trim(), active: true, updatedAt: nextVersion(family?.updatedAt) };
     const familyId = family?._id ?? await ctx.db.insert("families", { ...values, tokenHash });
     if (family) await ctx.db.patch(familyId, values);
     const previous = await ctx.db.query("slots").withIndex("by_familyId", q => q.eq("familyId", familyId)).take(180);
     const keep = new Set(args.choices.map(c => c.slotId));
     for (const slot of previous) if (!keep.has(slot._id)) await ctx.db.patch(slot._id, { familyId: null, dish: "" });
     for (const choice of args.choices) await ctx.db.patch(choice.slotId, { familyId, dish: choice.dish.trim() });
-    return familyId;
+    return { id: familyId, updatedAt: values.updatedAt };
   },
 });
 
@@ -96,33 +104,38 @@ export const adminResults = query({
 });
 
 export const adminUpdate = mutation({
-  args: { token: v.string(), id: v.id("families"), name: v.string(), guests: v.number(), comment: v.string(), choices: v.optional(choicesValidator) }, returns: v.null(),
+  args: { token: v.string(), id: v.id("families"), name: v.string(), guests: v.number(), comment: v.string(), choices: v.optional(choicesValidator), expectedUpdatedAt: v.optional(v.number()) }, returns: v.null(),
   handler: async (ctx, args) => {
     await checkAdmin(args.token); validateIdentity(args.name, args.guests, args.comment);
     const family = await ctx.db.get(args.id);
-    if (!family?.active) throw new ConvexError("Cette inscription n’existe plus.");
+    if (!family) throw new ConvexError("Cette inscription n’existe plus.");
+    checkVersion(family, args.expectedUpdatedAt);
     if (args.choices) {
-      if (args.choices.length > 180) throw new ConvexError("Trop de contributions.");
+      if (args.choices.length > 180 || new Set(args.choices.map(c => c.slotId)).size !== args.choices.length) throw new ConvexError("Sélection de contributions invalide.");
       for (const c of args.choices) {
         const slot = await ctx.db.get(c.slotId);
         if (slot?.familyId !== args.id || !c.dish.trim() || c.dish.length > 180) throw new ConvexError("Contribution invalide.");
-        await ctx.db.patch(c.slotId, { dish: c.dish.trim() });
       }
+      const previous = await ctx.db.query("slots").withIndex("by_familyId", q => q.eq("familyId", args.id)).take(180);
+      const keep = new Set(args.choices.map(c => c.slotId));
+      for (const slot of previous) if (!keep.has(slot._id)) await ctx.db.patch(slot._id, { familyId: null, dish: "" });
+      for (const c of args.choices) await ctx.db.patch(c.slotId, { dish: c.dish.trim() });
     }
-    await ctx.db.patch(args.id, { name: args.name.trim(), guests: args.guests, comment: args.comment.trim(), updatedAt: Date.now() });
+    await ctx.db.patch(args.id, { name: args.name.trim(), guests: args.guests, comment: args.comment.trim(), updatedAt: nextVersion(family.updatedAt) });
     return null;
   },
 });
 
 export const adminCancel = mutation({
-  args: { token: v.string(), id: v.id("families") }, returns: v.null(),
+  args: { token: v.string(), id: v.id("families"), expectedUpdatedAt: v.optional(v.number()) }, returns: v.null(),
   handler: async (ctx, args) => {
     await checkAdmin(args.token);
     const family = await ctx.db.get(args.id);
     if (!family) throw new ConvexError("Inscription introuvable.");
+    checkVersion(family, args.expectedUpdatedAt);
     const slots = await ctx.db.query("slots").withIndex("by_familyId", q => q.eq("familyId", args.id)).take(180);
     for (const s of slots) await ctx.db.patch(s._id, { familyId: null, dish: "" });
-    await ctx.db.patch(args.id, { active: false, updatedAt: Date.now() });
+    await ctx.db.patch(args.id, { active: false, updatedAt: nextVersion(family.updatedAt) });
     return null;
   },
 });

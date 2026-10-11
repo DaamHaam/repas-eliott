@@ -2,6 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { query, mutation, internalMutation, env } from "./_generated/server";
 import { categories } from "./categories";
 
+const categoryView = v.object({ key: v.string(), title: v.string(), instruction: v.string(), places: v.number() });
 const choicesValidator = v.array(v.object({ slotId: v.id("slots"), dish: v.string() }));
 const slotView = v.object({ id: v.id("slots"), category: v.string(), position: v.number(), familyId: v.union(v.id("families"), v.null()), name: v.string(), dish: v.string() });
 const familyView = v.object({ id: v.id("families"), name: v.string(), guests: v.number(), comment: v.string(), updatedAt: v.number() });
@@ -25,21 +26,24 @@ export const initialize = internalMutation({
   handler: async ctx => {
     for (const category of categories) {
       const existing = await ctx.db.query("slots").withIndex("by_category_and_position", q => q.eq("category", category.key)).take(20);
-      for (let position = 0; position < category.places; position++) {
-        if (!existing.some(s => s.position === position)) await ctx.db.insert("slots", { category: category.key, position, familyId: null, dish: "" });
-      }
+      const settings = await ctx.db.query("categorySettings").withIndex("by_key", q => q.eq("key", category.key)).unique();
+      const target = settings?.places ?? category.places;
+      const next = existing.reduce((n, s) => Math.max(n, s.position + 1), 0);
+      for (let i = existing.length; i < target; i++) await ctx.db.insert("slots", { category: category.key, position: next + i - existing.length, familyId: null, dish: "" });
     }
     return null;
   },
 });
 
 export const board = query({
-  args: {}, returns: v.object({ slots: v.array(slotView), families: v.array(v.object({ id: v.id("families"), name: v.string(), guests: v.number() })) }),
+  args: {}, returns: v.object({ categories: v.array(categoryView), slots: v.array(slotView), families: v.array(v.object({ id: v.id("families"), name: v.string(), guests: v.number() })) }),
   handler: async ctx => {
     const families = await ctx.db.query("families").withIndex("by_active", q => q.eq("active", true)).take(200);
     const slots = (await Promise.all(categories.map(c => ctx.db.query("slots").withIndex("by_category_and_position", q => q.eq("category", c.key)).take(20)))).flat();
+    const settings = await ctx.db.query("categorySettings").take(10);
+    const configured = categories.map(c => { const saved = settings.find(s => s.key === c.key); return { key: c.key, title: saved?.title ?? c.title, instruction: saved?.instruction ?? c.instruction, places: saved?.places ?? c.places }; });
     const names = new Map(families.map(f => [f._id, f.name]));
-    return { slots: slots.map(s => ({ id: s._id, category: s.category, position: s.position, familyId: s.familyId, name: s.familyId ? names.get(s.familyId) ?? "Participant" : "", dish: s.dish })), families: families.map(f => ({ id: f._id, name: f.name, guests: f.guests })) };
+    return { categories: configured, slots: slots.map(s => ({ id: s._id, category: s.category, position: s.position, familyId: s.familyId, name: s.familyId ? names.get(s.familyId) ?? "Participant" : "", dish: s.dish })), families: families.map(f => ({ id: f._id, name: f.name, guests: f.guests })) };
   },
 });
 
@@ -50,7 +54,7 @@ export const mine = query({
     const tokenHash = await hash(token);
     const f = await ctx.db.query("families").withIndex("by_tokenHash", q => q.eq("tokenHash", tokenHash)).unique();
     if (!f?.active) return null;
-    const slots = await ctx.db.query("slots").withIndex("by_familyId", q => q.eq("familyId", f._id)).take(100);
+    const slots = await ctx.db.query("slots").withIndex("by_familyId", q => q.eq("familyId", f._id)).take(180);
     return { family: { id: f._id, name: f.name, guests: f.guests, comment: f.comment, updatedAt: f.updatedAt }, choices: slots.map(s => ({ slotId: s._id, dish: s.dish })) };
   },
 });
@@ -59,7 +63,7 @@ export const save = mutation({
   args: { token: v.string(), name: v.string(), guests: v.number(), comment: v.string(), choices: choicesValidator }, returns: v.id("families"),
   handler: async (ctx, args) => {
     validateIdentity(args.name, args.guests, args.comment);
-    if (args.choices.length > 18 || new Set(args.choices.map(c => c.slotId)).size !== args.choices.length) throw new ConvexError("Sélection de places invalide.");
+    if (args.choices.length > 180 || new Set(args.choices.map(c => c.slotId)).size !== args.choices.length) throw new ConvexError("Sélection de places invalide.");
     const tokenHash = await hash(args.token);
     const family = await ctx.db.query("families").withIndex("by_tokenHash", q => q.eq("tokenHash", tokenHash)).unique();
     // Every slot is checked and written in one transaction: concurrent claims cannot overbook.
@@ -75,7 +79,7 @@ export const save = mutation({
     const values = { name: args.name.trim(), guests: args.guests, comment: args.comment.trim(), active: true, updatedAt: Date.now() };
     const familyId = family?._id ?? await ctx.db.insert("families", { ...values, tokenHash });
     if (family) await ctx.db.patch(familyId, values);
-    const previous = await ctx.db.query("slots").withIndex("by_familyId", q => q.eq("familyId", familyId)).take(100);
+    const previous = await ctx.db.query("slots").withIndex("by_familyId", q => q.eq("familyId", familyId)).take(180);
     const keep = new Set(args.choices.map(c => c.slotId));
     for (const slot of previous) if (!keep.has(slot._id)) await ctx.db.patch(slot._id, { familyId: null, dish: "" });
     for (const choice of args.choices) await ctx.db.patch(choice.slotId, { familyId, dish: choice.dish.trim() });
@@ -98,7 +102,7 @@ export const adminUpdate = mutation({
     const family = await ctx.db.get(args.id);
     if (!family?.active) throw new ConvexError("Cette inscription n’existe plus.");
     if (args.choices) {
-      if (args.choices.length > 18) throw new ConvexError("Trop de contributions.");
+      if (args.choices.length > 180) throw new ConvexError("Trop de contributions.");
       for (const c of args.choices) {
         const slot = await ctx.db.get(c.slotId);
         if (slot?.familyId !== args.id || !c.dish.trim() || c.dish.length > 180) throw new ConvexError("Contribution invalide.");
@@ -116,9 +120,32 @@ export const adminCancel = mutation({
     await checkAdmin(args.token);
     const family = await ctx.db.get(args.id);
     if (!family) throw new ConvexError("Inscription introuvable.");
-    const slots = await ctx.db.query("slots").withIndex("by_familyId", q => q.eq("familyId", args.id)).take(100);
+    const slots = await ctx.db.query("slots").withIndex("by_familyId", q => q.eq("familyId", args.id)).take(180);
     for (const s of slots) await ctx.db.patch(s._id, { familyId: null, dish: "" });
     await ctx.db.patch(args.id, { active: false, updatedAt: Date.now() });
+    return null;
+  },
+});
+
+export const adminConfigureCategory = mutation({
+  args: { token: v.string(), key: v.string(), title: v.string(), instruction: v.string(), places: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await checkAdmin(args.token);
+    if (!categories.some(c => c.key === args.key)) throw new ConvexError("Poste inconnu.");
+    const title = args.title.trim(), instruction = args.instruction.trim();
+    if (!title || title.length > 100 || !instruction || instruction.length > 500) throw new ConvexError("Indique un intitulé (100 caractères maximum) et une consigne (500 caractères maximum).");
+    if (!Number.isInteger(args.places) || args.places < 1 || args.places > 20) throw new ConvexError("Indique entre 1 et 20 places.");
+    const slots = await ctx.db.query("slots").withIndex("by_category_and_position", q => q.eq("category", args.key)).take(20);
+    if (slots.filter(s => s.familyId).length > args.places) throw new ConvexError("Impossible de retirer une place déjà réservée.");
+    const toRemove = Math.max(0, slots.length - args.places);
+    const free = slots.filter(s => !s.familyId).reverse();
+    for (const slot of free.slice(0, toRemove)) await ctx.db.delete(slot._id);
+    const next = slots.reduce((n, s) => Math.max(n, s.position + 1), 0);
+    for (let i = slots.length; i < args.places; i++) await ctx.db.insert("slots", { category: args.key, position: next + i - slots.length, familyId: null, dish: "" });
+    const existing = await ctx.db.query("categorySettings").withIndex("by_key", q => q.eq("key", args.key)).unique();
+    const values = { key: args.key, title, instruction, places: args.places };
+    if (existing) await ctx.db.patch(existing._id, values); else await ctx.db.insert("categorySettings", values);
     return null;
   },
 });

@@ -2,6 +2,9 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  categorySettings: defineTable({
+    key: v.string(), title: v.string(), instruction: v.string(), places: v.number(),
+  }).index("by_key", ["key"]),
   families: defineTable({
     tokenHash: v.string(), name: v.string(), guests: v.number(),
     comment: v.string(), active: v.boolean(), updatedAt: v.number(),

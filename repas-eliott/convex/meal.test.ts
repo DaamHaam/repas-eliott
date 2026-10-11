@@ -50,3 +50,34 @@ test('refuse convives fractionnaires, contributions vides et places répétées'
   await expect(t.mutation(api.meal.save, { token: a, ...identity, choices: [{ ...choice, dish: ' ' }] })).rejects.toThrow();
   await expect(t.mutation(api.meal.save, { token: a, ...identity, choices: [choice, choice] })).rejects.toThrow();
 });
+
+test('réglages organisateur protégés, nouvelles places et réservations conservées', async () => {
+  const t = convexTest(schema, modules); await t.mutation(internal.meal.initialize, {});
+  const before = await t.query(api.meal.board, {});
+  const dessert = before.slots.filter(s => s.category === 'dessert');
+  await t.mutation(api.meal.save, { token: a, ...identity, choices: [{ slotId: dessert[2].id, dish: 'Gâteau au chocolat' }] });
+  const config = { key: 'dessert', title: 'Desserts à partager', instruction: '1 à 2 gâteaux, ou l’équivalent de 12 parts chacun.', places: 4 };
+  await expect(t.mutation(api.meal.adminConfigureCategory, { token: b, ...config })).rejects.toThrow();
+  await t.mutation(api.meal.adminConfigureCategory, { token: admin, ...config });
+  await t.mutation(internal.meal.initialize, {});
+  const after = await t.query(api.meal.board, {});
+  expect(after.slots.filter(s => s.category === 'dessert')).toHaveLength(4);
+  expect(after.categories.find(c => c.key === 'dessert')).toEqual(config);
+  expect(after.slots.find(s => s.id === dessert[2].id)?.dish).toBe('Gâteau au chocolat');
+  await t.mutation(api.meal.adminConfigureCategory, { token: admin, ...config, places: 1 });
+  const reduced = (await t.query(api.meal.board, {})).slots.filter(s => s.category === 'dessert');
+  expect(reduced).toHaveLength(1); expect(reduced[0].id).toBe(dessert[2].id);
+  await expect(t.mutation(api.meal.adminConfigureCategory, { token: admin, ...config, places: 0 })).rejects.toThrow();
+});
+
+test('impossible de réduire sous les réservations ; contributions au-delà des 18 places initiales', async () => {
+  const t = convexTest(schema, modules); await t.mutation(internal.meal.initialize, {});
+  const config = { token: admin, key: 'aperitif', title: 'Apéritif', instruction: 'Pour 15 personnes chacune.', places: 20 };
+  await t.mutation(api.meal.adminConfigureCategory, config);
+  const slots = (await t.query(api.meal.board, {})).slots.filter(s => s.category === 'aperitif');
+  await t.mutation(api.meal.save, { token: a, ...identity, choices: slots.slice(0, 19).map(s => ({ slotId: s.id, dish: 'Olives' })) });
+  await expect(t.mutation(api.meal.adminConfigureCategory, { ...config, title: 'Ne doit pas changer', places: 18 })).rejects.toThrow();
+  const after = await t.query(api.meal.board, {});
+  expect(after.categories.find(c => c.key === 'aperitif')?.title).toBe('Apéritif');
+  expect(after.slots.filter(s => s.category === 'aperitif')).toHaveLength(20);
+});

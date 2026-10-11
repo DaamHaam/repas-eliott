@@ -13,12 +13,12 @@ Application React + Vite + Convex dans `repas-eliott/`. Depuis ce dossier : `npm
 - `repas-eliott/src/App.tsx` : formulaire public, tableau partagé et espace organisateur.
 - `repas-eliott/convex/categories.ts` : catégories, consignes et limites.
 - `repas-eliott/convex/meal.ts` : inscriptions et réservations atomiques, résultats protégés.
-- `repas-eliott/convex/schema.ts` : familles et places.
+- `repas-eliott/convex/schema.ts` : familles, places et réglages des postes.
 - `.github/workflows/ci.yml` : tests et build (CI).
 
 ## Invariants métier
 - Une réponse par famille : prénom, nombre de convives (la personne qui répond comprise), contributions.
-- Les places sont strictement limitées. L’ouverture à des contributions supplémentaires reste en suspens.
+- Les places sont limitées selon les réglages de chaque poste. Les organisateurs peuvent modifier intitulés, consignes et nombre de places (1 à 20 par poste) depuis le formulaire. Une réduction ne supprime jamais une réservation.
 - Aucun champ numérique de quantité pour les plats ; les quantités sont des consignes affichées.
 - Chacun peut voir les prénoms et les contributions déjà réservées, puis sélectionner les places libres.
 - Réservations et modifications dans une seule transaction Convex ; aucune double réservation.

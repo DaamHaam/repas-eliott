@@ -2,7 +2,7 @@
 
 ## Façon de travailler sur ce projet
 - **Branche de travail** : `dev`. `main` recevra la version validée uniquement sur demande explicite.
-- **Publication** : Vercel, projet `repas-eliott`, publication depuis le Mac. Aucun site GitHub Pages publié. Base Convex de production déployée depuis ce Mac sur demande.
+- **Publication** : Vercel, projet `repas-eliott`, publication automatique à chaque push sur `dev` via la liaison GitHub `DaamHaam/repas-eliott` ; publication manuelle depuis le Mac également possible. Aucun site GitHub Pages publié. Base Convex de production déployée depuis ce Mac sur demande.
 - **Tags de version** : aucun pour le moment.
 - **Particularités** : invités sans compte ; liens personnels de modification ; accès organisateur par clé privée. Ne jamais versionner `.organisateur.local` ou un lien privé.
 

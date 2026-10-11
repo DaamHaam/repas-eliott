@@ -4,7 +4,7 @@
 GitHub : `DaamHaam`, dépôt `DaamHaam/repas-eliott`. Connexion : CLI `gh`, identité DaamHaam forcée pour les commandes API. Identifiant de connexion web à compléter. Branche de travail : `dev`.
 
 ## Hébergement
-Vercel : compte `daamhaam`, adresse `damhamon@yahoo.fr`, équipe attendue `daamhaams-projects`. CLI connecté et identité vérifiée le 11 octobre 2026 ; le MCP reste déconnecté. Projet Vercel `repas-eliott`, URL publique vérifiée https://repas-eliott.vercel.app/. Projet ID `prj_ntz93fheSDe3E9YtB1LMtSFkBPKQ`. Aucun site GitHub Pages publié.
+Vercel : compte `daamhaam`, adresse `damhamon@yahoo.fr`, équipe attendue `daamhaams-projects`. CLI connecté et identité vérifiée le 11 octobre 2026 ; le MCP reste déconnecté. Projet Vercel `repas-eliott`, URL publique vérifiée https://repas-eliott.vercel.app/. Projet ID `prj_ntz93fheSDe3E9YtB1LMtSFkBPKQ`. Dépôt GitHub `DaamHaam/repas-eliott` lié avec autorisation le 11 octobre 2026 ; branche de production Vercel : `dev`, publication automatique à chaque push. Aucun site GitHub Pages publié.
 
 ## Base de données
 Convex, équipe `damien-hamon`, projet `repas-eliott`. Connexion Google `damien.hamon.dev@gmail.com`.

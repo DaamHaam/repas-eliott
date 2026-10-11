@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, useRef, type FormEvent } from "react";
 import { useMutation, useQuery, useConvexConnectionState } from "convex/react";
 import { ConvexError } from "convex/values";
 import { api } from "../convex/_generated/api";
@@ -6,6 +6,7 @@ import type { Id } from "../convex/_generated/dataModel";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Card } from "./components/ui/card";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "./components/ui/dialog";
 
 const storageKey = "eliott-family-token";
 function newToken() { return Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join(""); }
@@ -35,6 +36,7 @@ export default function App() {
   const [error, setError] = useState(""); const [saved, setSaved] = useState(false);
   const [showAdmin, setShowAdmin] = useState(Boolean(access.admin));
   const [copyState, setCopyState] = useState("");
+  const confirmationTitle = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     if (mine === undefined || initialized) return;
     if (mine) { setName(mine.family.name); setGuests(String(mine.family.guests)); setComment(mine.family.comment); setChoices(Object.fromEntries(mine.choices.map(c => [c.slotId, c.dish]))); }
@@ -65,7 +67,7 @@ export default function App() {
         </section>
         <div className="finish"><details className="comment"><summary>Message aux organisateurs</summary><textarea id="comment" aria-label="Message aux organisateurs" maxLength={500} value={comment} disabled={busy} onChange={e => { setComment(e.target.value); dirty(); }}/></details><Button className="primary-button" type="submit" disabled={busy || !initialized || !board || !connection.isWebSocketConnected}>{busy ? "Enregistrement…" : "Enregistrer"}</Button></div>
         {error && <p role="alert" className="notice error">{error}</p>}
-        {saved && <Card className="success" role="status"><p>Participation enregistrée.</p><p>Gardez ce lien privé pour modifier votre réponse.</p><div className="copy-row"><Input aria-label="Ton lien personnel de modification" readOnly value={editUrl}/><Button type="button" variant="outline" onClick={async () => { try { await navigator.clipboard.writeText(editUrl); setCopyState("Lien copié !"); } catch { setCopyState("Sélectionne puis copie le lien ci-dessus."); } }}>Copier le lien</Button></div><small>{copyState}</small></Card>}
+        <Dialog open={saved} onOpenChange={setSaved}><DialogContent className="save-confirmation" onOpenAutoFocus={e => { e.preventDefault(); confirmationTitle.current?.focus(); }}><span className="confirmation-check" aria-hidden="true">✓</span><DialogTitle ref={confirmationTitle} tabIndex={-1} className="confirmation-title">Votre contribution est enregistrée.</DialogTitle><DialogDescription>Gardez ce lien privé pour modifier votre réponse.</DialogDescription><div className="copy-row"><Input aria-label="Ton lien personnel de modification" readOnly value={editUrl}/><Button type="button" variant="outline" onClick={async () => { try { await navigator.clipboard.writeText(editUrl); setCopyState("Lien copié !"); } catch { setCopyState("Sélectionne puis copie le lien ci-dessus."); } }}>Copier le lien</Button></div><small role="status">{copyState}</small><Button type="button" className="primary-button" onClick={() => setSaved(false)}>Fermer</Button></DialogContent></Dialog>
       </form>
       </>}
     </main>;
